@@ -20,6 +20,7 @@ class MatrixLM(nn.Module):
     def __init__(self, vocab_size, d=8):
         super().__init__()
         self.d = d
+        self.vocab_size = vocab_size
         self.embeddings = nn.Parameter(
             torch.randn(vocab_size, d, d) * 0.05
         )
