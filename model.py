@@ -15,6 +15,9 @@ import argparse
 import os
 import random
 
+def get_device():
+    return torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
 EOS = "<"
 
 # ─────────────────────────────────────────────────────────────
@@ -96,6 +99,9 @@ def load_model(path):
 # ─────────────────────────────────────────────────────────────
 
 def train(args):
+    device = get_device()
+    print(f"使用设备: {device}")
+
     print(f"读取语料: {args.data}")
     sentences = load_corpus(args.data)
     print(f"句子数: {len(sentences)}")
@@ -108,13 +114,14 @@ def train(args):
     samples = make_samples(sentences, char2id, window=args.window)
     print(f"训练样本数: {len(samples)}")
 
-    model = MatrixLM(vocab_size, d=args.d)
+    model = MatrixLM(vocab_size, d=args.d).to(device)
     optimizer = optim.Adam(model.parameters(), lr=args.lr)
     criterion = nn.CrossEntropyLoss()
 
     if os.path.exists(args.save):
         print(f"发现已有模型，继续训练: {args.save}")
         model, char2id, id2char = load_model(args.save)
+        model = model.to(device)
         optimizer = optim.Adam(model.parameters(), lr=args.lr)
 
     model.train()
@@ -129,7 +136,7 @@ def train(args):
 
             optimizer.zero_grad()
             scores = model(ctx)
-            loss = criterion(scores.unsqueeze(0), torch.tensor([tgt]))
+            loss = criterion(scores.unsqueeze(0), torch.tensor([tgt], device=device))
 
             if torch.isnan(loss):
                 nan_count += 1
@@ -186,11 +193,15 @@ def generate(model, char2id, id2char, prompt, max_new=100, temperature=0.8, max_
     return result
 
 def infer(args):
+    device = get_device()
+    print(f"使用设备: {device}")
+
     if not os.path.exists(args.save):
         print(f"找不到模型文件: {args.save}，请先训练。")
         return
 
     model, char2id, id2char = load_model(args.save)
+    model = model.to(device)
     print(f"模型加载完毕  词表: {model.vocab_size}  矩阵维度: {model.d}x{model.d}")
     print("输入提示字符后回车续写，quit 退出。\n")
 
