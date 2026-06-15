@@ -15,7 +15,7 @@ import argparse
 import os
 import random
 
-EOS = "<EOS>"
+EOS = "<"
 
 # ─────────────────────────────────────────────────────────────
 # 数据
@@ -61,23 +61,13 @@ class MatrixLM(nn.Module):
         self.embeddings = nn.Parameter(
             torch.randn(vocab_size, d, d) * 0.05
         )
-        self.prefix_attn = nn.Linear(d * d, 1, bias=False)
-
     def forward(self, ctx_ids):
         M = self.embeddings[ctx_ids[0]]
-        prefixes = [M]
         for i in ctx_ids[1:]:
             M = M @ self.embeddings[i]
-            prefixes.append(M)
 
-        P = torch.stack(prefixes, dim=0)
-        alpha = torch.softmax(
-            self.prefix_attn(P.view(len(ctx_ids), -1)).squeeze(-1), dim=0
-        )
-        M_result = (alpha.view(-1, 1, 1) * P).sum(0)
-
-        dots = torch.einsum('ij,vij->v', M_result, self.embeddings)
-        norm_r = M_result.norm()
+        dots = torch.einsum('ij,vij->v', M, self.embeddings)
+        norm_r = M.norm()
         norm_v = self.embeddings.norm(dim=(1, 2))
         return dots / (norm_r * norm_v + 1e-8)
 
