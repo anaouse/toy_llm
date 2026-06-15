@@ -106,6 +106,10 @@ def load_model(path):
 # ─────────────────────────────────────────────────────────────
 
 def train(args):
+    # 1. 自动检测并使用 GPU
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    print(f"当前使用的设备: {device}")
+
     print(f"读取语料: {args.data}")
     sentences = load_corpus(args.data)
     print(f"句子数: {len(sentences)}")
@@ -119,13 +123,15 @@ def train(args):
     print(f"训练样本数: {len(samples)}")
 
     model = MatrixLM(vocab_size, d=args.d)
-    optimizer = optim.Adam(model.parameters(), lr=args.lr)
-    criterion = nn.CrossEntropyLoss()
 
     if os.path.exists(args.save):
         print(f"发现已有模型，继续训练: {args.save}")
         model, char2id, id2char = load_model(args.save)
-        optimizer = optim.Adam(model.parameters(), lr=args.lr)
+
+    # 2. 将模型移动到 GPU
+    model = model.to(device)
+    optimizer = optim.Adam(model.parameters(), lr=args.lr)
+    criterion = nn.CrossEntropyLoss()
 
     model.train()
     for epoch in range(1, args.epochs + 1):
@@ -133,13 +139,18 @@ def train(args):
         total_loss = 0.0
         nan_count  = 0
 
-        for ctx, tgt in samples:
-            # 限制连乘长度，防止长序列数值爆炸
+        for step, (ctx, tgt) in enumerate(samples):
             ctx = ctx[-args.max_ctx:]
 
             optimizer.zero_grad()
+
+            # 注意：如果 ctx 只是个 list 索引，直接传进去即可
+            # 模型内部的 embeddings 在 GPU 上，取出的张量也会在 GPU 上
             scores = model(ctx)
-            loss = criterion(scores.unsqueeze(0), torch.tensor([tgt]))
+
+            # 3. 将目标标签也放到 GPU 上
+            target_tensor = torch.tensor([tgt], device=device)
+            loss = criterion(scores.unsqueeze(0), target_tensor)
 
             if torch.isnan(loss):
                 nan_count += 1
@@ -149,12 +160,13 @@ def train(args):
             torch.nn.utils.clip_grad_norm_(model.parameters(), 0.5)
             optimizer.step()
 
-            # 归一化 embedding，防止奇异值连乘后爆炸
-            with torch.no_grad():
-                norms = model.embeddings.norm(dim=(1, 2), keepdim=True)
-                model.embeddings.data /= (norms + 1e-8)
-
             total_loss += loss.item()
+
+            # 4. 优化：不要每个字都全局归一化！改成每 1000 步或者每个 epoch 做一次即可
+            if step % 1000 == 0:
+                with torch.no_grad():
+                    norms = model.embeddings.norm(dim=(1, 2), keepdim=True)
+                    model.embeddings.data /= (norms + 1e-8)
 
         valid = len(samples) - nan_count
         avg   = total_loss / max(valid, 1)
@@ -164,7 +176,6 @@ def train(args):
             save_model(model, char2id, id2char, args.save)
 
     save_model(model, char2id, id2char, args.save)
-
 # ─────────────────────────────────────────────────────────────
 # 推理
 # ─────────────────────────────────────────────────────────────
